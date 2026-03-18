@@ -32,15 +32,17 @@ for row in rows:
     if len(row) > 1:
         existing_ids.add(row[1])
 
-# Query Zendesk for tickets from the last 31 days
-start_date = (datetime.utcnow() - timedelta(days=31)).strftime("%Y-%m-%d")
+# Query Zendesk (TESTING: no tag filter)
 query = "type:ticket created>2026-03-10"
+
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
 zd_url = f"https://{ZD_SUBDOMAIN}.zendesk.com/api/v2/search.json"
 response = session.get(zd_url, params={"query": query})
 response.raise_for_status()
 results = response.json()["results"]
+
+print(f"Zendesk returned {len(results)} tickets")
 
 # Helper: clean and trim ticket description
 def clean_description(raw_html):
@@ -82,19 +84,18 @@ for ticket in results:
 # Sort from newest to oldest and insert at top
 if new_rows:
     new_rows.sort(key=lambda x: x[0], reverse=True)
-    for row in reversed(new_rows):  # reversed to maintain sort order
+    for row in reversed(new_rows):
         sheet.insert_row(row, index=2)
 
-    print(f"✅ Imported {len(new_rows)} new tickets.")
+    print(f"Imported {len(new_rows)} new tickets.")
 
-    # Slack notification
     slack_message = {
-        "text": f":white_check_mark: {len(new_rows)} new positive feedback ticket(s) added!\n{SHEET_URL}"
+        "text": f"{len(new_rows)} new ticket(s) added.\n{SHEET_URL}"
     }
     try:
         slack_resp = requests.post(SLACK_WEBHOOK_URL, json=slack_message)
         slack_resp.raise_for_status()
     except Exception as e:
-        print(f"⚠️ Slack notification failed: {e}")
+        print(f"Slack notification failed: {e}")
 else:
-    print("ℹ️ No new tickets to import.")
+    print("No new tickets to import.")
