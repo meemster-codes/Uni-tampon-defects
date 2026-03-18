@@ -34,7 +34,7 @@ for row in rows:
 
 # Query Zendesk for tickets from the last 31 days
 start_date = (datetime.utcnow() - timedelta(days=31)).strftime("%Y-%m-%d")
-query = "type:ticket tags:applicator_tampon tags:product_issue tags:st_product created>2026-03-10"
+query = "type:ticket tags:applicator_tampon,product_issue,st_product created>2026-03-10"
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
 zd_url = f"https://{ZD_SUBDOMAIN}.zendesk.com/api/v2/search.json"
