@@ -1,0 +1,19 @@
+services:
+  - type: cron
+    name: uni_tampon_feedback
+    runtime: python
+    plan: starter
+    schedule: "0 9 * * *"
+    envVars:
+      - key: ZD_SUBDOMAIN
+        fromEnvVar: ZD_SUBDOMAIN
+      - key: ZD_EMAIL
+        fromEnvVar: ZD_EMAIL
+      - key: ZD_API_TOKEN
+        fromEnvVar: ZD_API_TOKEN
+      - key: GOOGLE_SHEET_ID
+        fromEnvVar: GOOGLE_SHEET_ID
+      - key: SLACK_WEBHOOK_URL
+        fromEnvVar: SLACK_WEBHOOK_URL
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 main.py
