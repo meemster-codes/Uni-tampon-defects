@@ -4,6 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from bs4 import BeautifulSoup
 import re
+from datetime import datetime, timedelta
 
 # --- Zendesk credentials ---
 ZD_SUBDOMAIN = os.getenv("ZD_SUBDOMAIN")
@@ -26,23 +27,20 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 
 existing_data = sheet.get_all_values()
 
-# --- Ensure header + get last ticket ID ---
+# --- Ensure header ---
 if not existing_data:
     sheet.append_row(["Date", "Ticket ID", "Subject", "Ticket", "URL", "Absorbency"])
-    last_id = 0
+    existing_ids = set()
 else:
-    last_id = 0
-    if len(existing_data) > 1:
-        try:
-            last_id = int(existing_data[1][1])  # newest ticket ID (row 2)
-        except:
-            last_id = 0
+    existing_ids = set()
+    for row in existing_data[1:]:
+        if len(row) > 1:
+            existing_ids.add(row[1])
 
-# --- Zendesk query ---
-if last_id > 0:
-    query = f'type:ticket tags:"product_issue applicator_tampon st_product" id>{last_id}'
-else:
-    query = 'type:ticket tags:"product_issue applicator_tampon st_product" created>2026-03-10'
+# --- LOOKBACK WINDOW (2 days) ---
+lookback_date = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%d")
+
+query = f'type:ticket tags:"product_issue applicator_tampon st_product" created>={lookback_date}'
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
@@ -71,12 +69,6 @@ def clean_description(raw_html):
             text = text[:match.start()]
     return text.strip()
 
-# --- Existing IDs (dedupe safety) ---
-existing_ids = set()
-for row in existing_data[1:]:
-    if len(row) > 1:
-        existing_ids.add(row[1])
-
 # --- Build rows ---
 new_rows = []
 
@@ -103,10 +95,10 @@ for ticket in results:
         absorbency
     ])
 
-# --- Sort by newest ID ---
+# --- Sort newest first ---
 new_rows.sort(key=lambda x: int(x[1]), reverse=True)
 
-# --- Insert at top (single batch) ---
+# --- Write to sheet ---
 if new_rows:
     sheet.insert_rows(new_rows, row=2)
     print(f"Inserted {len(new_rows)} new rows")
@@ -118,13 +110,15 @@ if SLACK_WEBHOOK_URL:
     if new_rows:
         newest_date = new_rows[0][0]
         oldest_date = new_rows[-1][0]
+        count_text = f"{len(new_rows)} new tickets"
     else:
         newest_date = "N/A"
         oldest_date = "N/A"
+        count_text = "No new tickets"
 
     message = (
         f"✅ Uni tampon sheet updated\n"
-        f"{len(new_rows)} new tickets\n"
+        f"{count_text}\n"
         f"{oldest_date} → {newest_date}\n"
         f"{SHEET_URL}"
     )
