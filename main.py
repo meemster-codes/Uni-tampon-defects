@@ -19,6 +19,17 @@ SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit#gid=0"
 # --- Slack ---
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 
+# --- Slack test ---
+try:
+    test_message = {
+        "text": "Zendesk script is running"
+    }
+    resp = requests.post(SLACK_WEBHOOK_URL, json=test_message)
+    resp.raise_for_status()
+    print("Slack test message sent successfully")
+except Exception as e:
+    print(f"Slack test failed: {e}")
+
 # Authenticate with Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
