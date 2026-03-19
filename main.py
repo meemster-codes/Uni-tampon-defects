@@ -1,6 +1,5 @@
 import os
 import requests
-from datetime import datetime, timedelta
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from bs4 import BeautifulSoup
@@ -21,24 +20,31 @@ creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SHEET_ID).sheet1
 
-# --- CLEAR SHEET (keep header row) ---
+# --- CLEAR SHEET BUT KEEP HEADER ---
 existing_data = sheet.get_all_values()
-if len(existing_data) > 1:
-    sheet.resize(rows=1)
 
-# Query Zendesk (NOW FILTERING BY TAG)
+if not existing_data:
+    # If sheet is empty, create header
+    sheet.append_row(["Date", "Ticket ID", "Subject", "Description", "URL"])
+else:
+    header = existing_data[0]
+    sheet.clear()
+    sheet.append_row(header)
+
+# --- Zendesk query (WITH TAG FILTER) ---
 query = "type:ticket tags:applicator_tampon created>2026-03-10"
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
 zd_url = f"https://{ZD_SUBDOMAIN}.zendesk.com/api/v2/search.json"
+
 response = session.get(zd_url, params={"query": query})
 response.raise_for_status()
 results = response.json()["results"]
 
 print(f"Zendesk returned {len(results)} tickets")
 
-# Helper: clean and trim ticket description
+# --- Clean description ---
 def clean_description(raw_html):
     text = BeautifulSoup(raw_html, "html.parser").get_text()
     cut_patterns = [
@@ -53,8 +59,8 @@ def clean_description(raw_html):
             text = text[:match.start()]
     return text.strip()
 
-# Prepare rows
-new_rows = []
+# --- Build rows ---
+rows_to_write = []
 for ticket in results:
     ticket_id = str(ticket.get("id"))
     subject = ticket.get("subject", "").strip()
@@ -64,7 +70,7 @@ for ticket in results:
     ticket_url = f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket_id}"
 
     if cleaned_description:
-        new_rows.append([
+        rows_to_write.append([
             created_date,
             ticket_id,
             subject,
@@ -72,11 +78,12 @@ for ticket in results:
             ticket_url
         ])
 
-# Sort and batch insert
-if new_rows:
-    new_rows.sort(key=lambda x: x[0], reverse=True)
-    sheet.insert_rows(new_rows, row=2)
+# --- Sort newest first ---
+rows_to_write.sort(key=lambda x: x[0], reverse=True)
 
-    print(f"Inserted {len(new_rows)} rows.")
+# --- WRITE ALL AT ONCE ---
+if rows_to_write:
+    sheet.append_rows(rows_to_write)
+    print(f"Wrote {len(rows_to_write)} rows.")
 else:
     print("No tickets found.")
