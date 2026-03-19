@@ -14,13 +14,13 @@ ZD_API_TOKEN = os.getenv("ZD_API_TOKEN")
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 CREDENTIALS_FILE = "/etc/secrets/google-credentials.json"
 
-# Authenticate
+# Authenticate with Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SHEET_ID).sheet1
 
-# --- CLEAR SHEET ---
+# --- CLEAR SHEET BUT KEEP HEADER ---
 existing_data = sheet.get_all_values()
 if not existing_data:
     sheet.append_row(["Date", "Ticket ID", "Subject", "Description", "URL"])
@@ -29,28 +29,20 @@ else:
     sheet.clear()
     sheet.append_row(header)
 
-# --- Zendesk query (MATCH UI) ---
-query = "type:ticket created>2026-03-10 sort_by:created_at sort_order:desc"
+# --- ZENDESK QUERY (MATCH UI EXACTLY) ---
+query = 'type:ticket tags:"product_issue applicator_tampon st_product" created>2026-03-10'
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
-
-all_results = []
 url = f"https://{ZD_SUBDOMAIN}.zendesk.com/api/v2/search.json"
 
-while url:
-    response = session.get(url, params={"query": query} if "search.json" in url else None)
-    response.raise_for_status()
-    data = response.json()
+response = session.get(url, params={"query": query})
+response.raise_for_status()
+results = response.json()["results"]
 
-    all_results.extend(data["results"])
-    url = data.get("next_page")
+print(f"Zendesk returned {len(results)} tickets")
 
-print(f"Total fetched: {len(all_results)}")
-
-# --- REQUIRED TAGS ---
-REQUIRED_TAGS = {"applicator_tampon", "product_issue", "st_product"}
-
+# --- Clean description ---
 def clean_description(raw_html):
     text = BeautifulSoup(raw_html, "html.parser").get_text()
     for pattern in [r"On .* wrote:", r"Sent from.*", r"--\s*\n", r"#yiv.*"]:
@@ -59,14 +51,10 @@ def clean_description(raw_html):
             text = text[:match.start()]
     return text.strip()
 
+# --- Build rows ---
 rows_to_write = []
 
-for ticket in all_results:
-    tags = set(ticket.get("tags", []))
-
-    if not REQUIRED_TAGS.issubset(tags):
-        continue
-
+for ticket in results:
     rows_to_write.append([
         ticket.get("created_at", "")[:10],
         str(ticket.get("id")),
@@ -75,10 +63,10 @@ for ticket in all_results:
         f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}"
     ])
 
-print(f"After filtering: {len(rows_to_write)}")
-
+# --- Sort newest first ---
 rows_to_write.sort(key=lambda x: x[0], reverse=True)
 
+# --- WRITE TO SHEET ---
 if rows_to_write:
     sheet.append_rows(rows_to_write)
     print(f"Wrote {len(rows_to_write)} rows.")
