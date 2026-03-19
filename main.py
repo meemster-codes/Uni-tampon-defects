@@ -27,13 +27,13 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 # --- CLEAR SHEET BUT KEEP HEADER ---
 existing_data = sheet.get_all_values()
 if not existing_data:
-    sheet.append_row(["Date", "Ticket ID", "Subject", "Description", "URL"])
+    sheet.append_row(["Date", "Ticket ID", "Subject", "Ticket", "URL", "Absorbency"])
 else:
     header = existing_data[0]
     sheet.clear()
     sheet.append_row(header)
 
-# --- ZENDESK QUERY ---
+# --- ZENDESK QUERY (DO NOT TOUCH) ---
 query = 'type:ticket tags:"product_issue applicator_tampon st_product" created>2026-03-10'
 
 session = requests.Session()
@@ -45,6 +45,14 @@ response.raise_for_status()
 results = response.json()["results"]
 
 print(f"Zendesk returned {len(results)} tickets")
+
+# --- Absorbency mapping ---
+ABSORBENCY_MAP = {
+    "light_tampon_absorbency": "Light",
+    "regular_tampon_absorbency": "Regular",
+    "super_tampon_absorbency": "Super",
+    "super_plus_tampon_absorbency": "Super Plus"
+}
 
 # --- Clean description ---
 def clean_description(raw_html):
@@ -59,12 +67,25 @@ def clean_description(raw_html):
 rows_to_write = []
 
 for ticket in results:
+    tags = ticket.get("tags", [])
+
+    absorbency = ""
+    for tag in tags:
+        if tag in ABSORBENCY_MAP:
+            absorbency = ABSORBENCY_MAP[tag]
+            break
+
+    # fallback
+    if not absorbency:
+        absorbency = "Unknown"
+
     rows_to_write.append([
         ticket.get("created_at", "")[:10],
         str(ticket.get("id")),
         ticket.get("subject", "").strip(),
         clean_description(ticket.get("description", "")),
-        f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}"
+        f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}",
+        absorbency
     ])
 
 # --- Sort newest first ---
@@ -88,7 +109,7 @@ else:
 # --- SLACK NOTIFICATION ---
 if SLACK_WEBHOOK_URL:
     message = (
-        f"🧵 Uni tampon sheet updated\n"
+        f"✅ Uni tampon sheet updated\n"
         f"{len(rows_to_write)} tickets\n"
         f"{oldest_date} → {newest_date}\n"
         f"{SHEET_URL}"
