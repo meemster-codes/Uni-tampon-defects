@@ -30,8 +30,8 @@ else:
     sheet.clear()
     sheet.append_row(header)
 
-# --- Zendesk query (2 TAGS) ---
-query = "type:ticket tags:applicator_tampon tags:product_issue created>2026-03-10"
+# --- Zendesk query (broad, filter in Python) ---
+query = "type:ticket created>2026-03-10"
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
@@ -42,6 +42,9 @@ response.raise_for_status()
 results = response.json()["results"]
 
 print(f"Zendesk returned {len(results)} tickets")
+
+# --- REQUIRED TAGS (strict AND) ---
+REQUIRED_TAGS = {"applicator_tampon", "product_issue"}
 
 # --- Clean description ---
 def clean_description(raw_html):
@@ -60,7 +63,14 @@ def clean_description(raw_html):
 
 # --- Build rows ---
 rows_to_write = []
+
 for ticket in results:
+    ticket_tags = set(ticket.get("tags", []))
+
+    # Enforce BOTH tags
+    if not REQUIRED_TAGS.issubset(ticket_tags):
+        continue
+
     ticket_id = str(ticket.get("id"))
     subject = ticket.get("subject", "").strip()
     raw_description = ticket.get("description", "").strip()
@@ -77,6 +87,8 @@ for ticket in results:
             ticket_url
         ])
 
+print(f"After tag filtering: {len(rows_to_write)} tickets")
+
 # --- Sort newest first ---
 rows_to_write.sort(key=lambda x: x[0], reverse=True)
 
@@ -86,3 +98,6 @@ if rows_to_write:
     print(f"Wrote {len(rows_to_write)} rows.")
 else:
     print("No tickets found.")
+
+# --- STOP LOOPING (prevents Render auto-rerun) ---
+raise SystemExit("Done")
