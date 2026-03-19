@@ -27,7 +27,7 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 # --- CLEAR SHEET BUT KEEP HEADER ---
 existing_data = sheet.get_all_values()
 if not existing_data:
-    sheet.append_row(["Date", "Ticket ID", "Subject", "Ticket", "URL", "Absorbency"])
+    sheet.append_row(["Date", "Ticket ID", "Subject", "Ticket", "URL", "Absorbency", "Won't Expel"])
 else:
     header = existing_data[0]
     sheet.clear()
@@ -69,23 +69,43 @@ rows_to_write = []
 for ticket in results:
     tags = ticket.get("tags", [])
 
+    # --- Absorbency ---
     absorbency = ""
     for tag in tags:
         if tag in ABSORBENCY_MAP:
             absorbency = ABSORBENCY_MAP[tag]
             break
 
-    # fallback
     if not absorbency:
         absorbency = "Unknown"
+
+    # --- Cleaned text ---
+    cleaned_description = clean_description(ticket.get("description", ""))
+    text = cleaned_description.lower()
+
+    # --- Won't Expel logic (strict) ---
+    wont_expel = any([
+        "won't expel" in text,
+        "wont expel" in text,
+        "won't release" in text,
+        "wont release" in text,
+        "doesn't release" in text,
+        "doesnt release" in text,
+        "won't come out" in text,
+        "wont come out" in text,
+        "stuck inside" in text
+    ])
+
+    wont_expel_value = "X" if wont_expel else ""
 
     rows_to_write.append([
         ticket.get("created_at", "")[:10],
         str(ticket.get("id")),
         ticket.get("subject", "").strip(),
-        clean_description(ticket.get("description", "")),
+        cleaned_description,
         f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}",
-        absorbency
+        absorbency,
+        wont_expel_value
     ])
 
 # --- Sort newest first ---
