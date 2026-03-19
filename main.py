@@ -14,7 +14,7 @@ ZD_API_TOKEN = os.getenv("ZD_API_TOKEN")
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 CREDENTIALS_FILE = "/etc/secrets/google-credentials.json"
 
-# Authenticate with Google Sheets
+# Authenticate
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
 client = gspread.authorize(creds)
@@ -29,18 +29,24 @@ else:
     sheet.clear()
     sheet.append_row(header)
 
-# --- Zendesk query (UPDATED instead of CREATED) ---
-query = "type:ticket updated>2026-03-10"
+# --- Zendesk query (MATCH UI) ---
+query = "type:ticket created>2026-03-10 sort_by:created_at sort_order:desc"
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
-zd_url = f"https://{ZD_SUBDOMAIN}.zendesk.com/api/v2/search.json"
 
-response = session.get(zd_url, params={"query": query})
-response.raise_for_status()
-results = response.json()["results"]
+all_results = []
+url = f"https://{ZD_SUBDOMAIN}.zendesk.com/api/v2/search.json"
 
-print(f"Zendesk returned {len(results)} tickets")
+while url:
+    response = session.get(url, params={"query": query} if "search.json" in url else None)
+    response.raise_for_status()
+    data = response.json()
+
+    all_results.extend(data["results"])
+    url = data.get("next_page")
+
+print(f"Total fetched: {len(all_results)}")
 
 # --- REQUIRED TAGS ---
 REQUIRED_TAGS = {"applicator_tampon", "product_issue", "st_product"}
@@ -55,7 +61,7 @@ def clean_description(raw_html):
 
 rows_to_write = []
 
-for ticket in results:
+for ticket in all_results:
     tags = set(ticket.get("tags", []))
 
     if not REQUIRED_TAGS.issubset(tags):
@@ -69,7 +75,7 @@ for ticket in results:
         f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}"
     ])
 
-print(f"After filtering: {len(rows_to_write)} tickets")
+print(f"After filtering: {len(rows_to_write)}")
 
 rows_to_write.sort(key=lambda x: x[0], reverse=True)
 
