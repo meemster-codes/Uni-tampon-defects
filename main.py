@@ -67,6 +67,7 @@ for ticket in results:
         f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}"
     ])
 
+# --- Sort newest first ---
 rows_to_write.sort(key=lambda x: x[0], reverse=True)
 
 # --- WRITE TO SHEET ---
@@ -76,11 +77,25 @@ if rows_to_write:
 else:
     print("No tickets found.")
 
+# --- DATE RANGE ---
+if rows_to_write:
+    newest_date = rows_to_write[0][0]
+    oldest_date = rows_to_write[-1][0]
+else:
+    newest_date = "N/A"
+    oldest_date = "N/A"
+
 # --- SLACK NOTIFICATION ---
 if SLACK_WEBHOOK_URL:
-    slack_message = {
-        "text": f"{len(rows_to_write)} ticket(s) exported\n{SHEET_URL}"
-    }
+    message = (
+        f"🧵 Uni tampon sheet updated\n"
+        f"{len(rows_to_write)} tickets\n"
+        f"{oldest_date} → {newest_date}\n"
+        f"{SHEET_URL}"
+    )
+
+    slack_message = {"text": message}
+
     try:
         resp = requests.post(SLACK_WEBHOOK_URL, json=slack_message)
         resp.raise_for_status()
