@@ -18,23 +18,31 @@ SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit#gid=0"
 # --- Slack ---
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 
-# Authenticate with Google Sheets
+# Authenticate
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SHEET_ID).sheet1
 
-# --- CLEAR SHEET BUT KEEP HEADER ---
 existing_data = sheet.get_all_values()
-if not existing_data:
-    sheet.append_row(["Date", "Ticket ID", "Subject", "Ticket", "URL", "Absorbency", "Won't Expel"])
-else:
-    header = existing_data[0]
-    sheet.clear()
-    sheet.append_row(header)
 
-# --- ZENDESK QUERY (DO NOT TOUCH) ---
-query = 'type:ticket tags:"product_issue applicator_tampon st_product" created>2026-03-10'
+# --- Ensure header + get last ticket ID ---
+if not existing_data:
+    sheet.append_row(["Date", "Ticket ID", "Subject", "Ticket", "URL", "Absorbency"])
+    last_id = 0
+else:
+    last_id = 0
+    if len(existing_data) > 1:
+        try:
+            last_id = int(existing_data[1][1])  # newest ticket ID (row 2)
+        except:
+            last_id = 0
+
+# --- Zendesk query ---
+if last_id > 0:
+    query = f'type:ticket tags:"product_issue applicator_tampon st_product" id>{last_id}'
+else:
+    query = 'type:ticket tags:"product_issue applicator_tampon st_product" created>2026-03-10'
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
@@ -63,85 +71,66 @@ def clean_description(raw_html):
             text = text[:match.start()]
     return text.strip()
 
+# --- Existing IDs (dedupe safety) ---
+existing_ids = set()
+for row in existing_data[1:]:
+    if len(row) > 1:
+        existing_ids.add(row[1])
+
 # --- Build rows ---
-rows_to_write = []
+new_rows = []
 
 for ticket in results:
+    ticket_id = str(ticket.get("id"))
+
+    if ticket_id in existing_ids:
+        continue
+
     tags = ticket.get("tags", [])
 
-    # --- Absorbency ---
-    absorbency = ""
+    absorbency = "Unknown"
     for tag in tags:
         if tag in ABSORBENCY_MAP:
             absorbency = ABSORBENCY_MAP[tag]
             break
 
-    if not absorbency:
-        absorbency = "Unknown"
-
-    # --- Cleaned text ---
-    cleaned_description = clean_description(ticket.get("description", ""))
-    text = cleaned_description.lower()
-
-    # --- Won't Expel logic (strict) ---
-    wont_expel = any([
-        "won't expel" in text,
-        "wont expel" in text,
-        "won't release" in text,
-        "wont release" in text,
-        "doesn't release" in text,
-        "doesnt release" in text,
-        "won't come out" in text,
-        "wont come out" in text,
-        "stuck inside" in text
-    ])
-
-    wont_expel_value = "X" if wont_expel else ""
-
-    rows_to_write.append([
+    new_rows.append([
         ticket.get("created_at", "")[:10],
-        str(ticket.get("id")),
+        ticket_id,
         ticket.get("subject", "").strip(),
-        cleaned_description,
-        f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}",
-        absorbency,
-        wont_expel_value
+        clean_description(ticket.get("description", "")),
+        f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket_id}",
+        absorbency
     ])
 
-# --- Sort newest first ---
-rows_to_write.sort(key=lambda x: x[0], reverse=True)
+# --- Sort by newest ID ---
+new_rows.sort(key=lambda x: int(x[1]), reverse=True)
 
-# --- WRITE TO SHEET ---
-if rows_to_write:
-    sheet.append_rows(rows_to_write)
-    print(f"Wrote {len(rows_to_write)} rows.")
+# --- Insert at top (single batch) ---
+if new_rows:
+    sheet.insert_rows(new_rows, row=2)
+    print(f"Inserted {len(new_rows)} new rows")
 else:
-    print("No tickets found.")
+    print("No new tickets")
 
-# --- DATE RANGE ---
-if rows_to_write:
-    newest_date = rows_to_write[0][0]
-    oldest_date = rows_to_write[-1][0]
-else:
-    newest_date = "N/A"
-    oldest_date = "N/A"
-
-# --- SLACK NOTIFICATION ---
+# --- Slack notification ---
 if SLACK_WEBHOOK_URL:
+    if new_rows:
+        newest_date = new_rows[0][0]
+        oldest_date = new_rows[-1][0]
+    else:
+        newest_date = "N/A"
+        oldest_date = "N/A"
+
     message = (
         f"✅ Uni tampon sheet updated\n"
-        f"{len(rows_to_write)} tickets\n"
+        f"{len(new_rows)} new tickets\n"
         f"{oldest_date} → {newest_date}\n"
         f"{SHEET_URL}"
     )
 
-    slack_message = {"text": message}
-
     try:
-        resp = requests.post(SLACK_WEBHOOK_URL, json=slack_message)
-        resp.raise_for_status()
+        requests.post(SLACK_WEBHOOK_URL, json={"text": message})
         print("Slack notification sent")
     except Exception as e:
         print(f"Slack error: {e}")
-else:
-    print("No Slack webhook configured")
