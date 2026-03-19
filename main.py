@@ -13,6 +13,10 @@ ZD_API_TOKEN = os.getenv("ZD_API_TOKEN")
 # --- Google Sheets setup ---
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 CREDENTIALS_FILE = "/etc/secrets/google-credentials.json"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit#gid=0"
+
+# --- Slack ---
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 
 # Authenticate with Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -29,7 +33,7 @@ else:
     sheet.clear()
     sheet.append_row(header)
 
-# --- ZENDESK QUERY (MATCH UI EXACTLY) ---
+# --- ZENDESK QUERY ---
 query = 'type:ticket tags:"product_issue applicator_tampon st_product" created>2026-03-10'
 
 session = requests.Session()
@@ -63,7 +67,6 @@ for ticket in results:
         f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}"
     ])
 
-# --- Sort newest first ---
 rows_to_write.sort(key=lambda x: x[0], reverse=True)
 
 # --- WRITE TO SHEET ---
@@ -72,3 +75,17 @@ if rows_to_write:
     print(f"Wrote {len(rows_to_write)} rows.")
 else:
     print("No tickets found.")
+
+# --- SLACK NOTIFICATION ---
+if SLACK_WEBHOOK_URL:
+    slack_message = {
+        "text": f"{len(rows_to_write)} ticket(s) exported\n{SHEET_URL}"
+    }
+    try:
+        resp = requests.post(SLACK_WEBHOOK_URL, json=slack_message)
+        resp.raise_for_status()
+        print("Slack notification sent")
+    except Exception as e:
+        print(f"Slack error: {e}")
+else:
+    print("No Slack webhook configured")
