@@ -24,15 +24,14 @@ sheet = client.open_by_key(SHEET_ID).sheet1
 existing_data = sheet.get_all_values()
 
 if not existing_data:
-    # If sheet is empty, create header
     sheet.append_row(["Date", "Ticket ID", "Subject", "Description", "URL"])
 else:
     header = existing_data[0]
     sheet.clear()
     sheet.append_row(header)
 
-# --- Zendesk query (WITH TAG FILTER) ---
-query = "type:ticket tags:applicator_tampon created>2026-03-10"
+# --- Zendesk query (2 TAGS) ---
+query = "type:ticket tags:applicator_tampon tags:product_issue created>2026-03-10"
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
