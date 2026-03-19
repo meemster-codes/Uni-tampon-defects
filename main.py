@@ -20,9 +20,8 @@ creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SHEET_ID).sheet1
 
-# --- CLEAR SHEET BUT KEEP HEADER ---
+# --- CLEAR SHEET ---
 existing_data = sheet.get_all_values()
-
 if not existing_data:
     sheet.append_row(["Date", "Ticket ID", "Subject", "Description", "URL"])
 else:
@@ -30,8 +29,8 @@ else:
     sheet.clear()
     sheet.append_row(header)
 
-# --- Zendesk query (broad, filter in Python) ---
-query = "type:ticket created>2026-03-10"
+# --- Zendesk query (UPDATED instead of CREATED) ---
+query = "type:ticket updated>2026-03-10"
 
 session = requests.Session()
 session.auth = (f"{ZD_EMAIL}/token", ZD_API_TOKEN)
@@ -43,61 +42,39 @@ results = response.json()["results"]
 
 print(f"Zendesk returned {len(results)} tickets")
 
-# --- REQUIRED TAGS (strict AND) ---
-REQUIRED_TAGS = {"applicator_tampon", "product_issue"}
+# --- REQUIRED TAGS ---
+REQUIRED_TAGS = {"applicator_tampon", "product_issue", "st_product"}
 
-# --- Clean description ---
 def clean_description(raw_html):
     text = BeautifulSoup(raw_html, "html.parser").get_text()
-    cut_patterns = [
-        r"On .* wrote:",
-        r"Sent from.*",
-        r"--\s*\n",
-        r"#yiv.*"
-    ]
-    for pattern in cut_patterns:
+    for pattern in [r"On .* wrote:", r"Sent from.*", r"--\s*\n", r"#yiv.*"]:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             text = text[:match.start()]
     return text.strip()
 
-# --- Build rows ---
 rows_to_write = []
 
 for ticket in results:
-    ticket_tags = set(ticket.get("tags", []))
+    tags = set(ticket.get("tags", []))
 
-    # Enforce BOTH tags
-    if not REQUIRED_TAGS.issubset(ticket_tags):
+    if not REQUIRED_TAGS.issubset(tags):
         continue
 
-    ticket_id = str(ticket.get("id"))
-    subject = ticket.get("subject", "").strip()
-    raw_description = ticket.get("description", "").strip()
-    cleaned_description = clean_description(raw_description)
-    created_date = ticket.get("created_at", "")[:10]
-    ticket_url = f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket_id}"
+    rows_to_write.append([
+        ticket.get("created_at", "")[:10],
+        str(ticket.get("id")),
+        ticket.get("subject", "").strip(),
+        clean_description(ticket.get("description", "")),
+        f"https://{ZD_SUBDOMAIN}.zendesk.com/agent/tickets/{ticket.get('id')}"
+    ])
 
-    if cleaned_description:
-        rows_to_write.append([
-            created_date,
-            ticket_id,
-            subject,
-            cleaned_description,
-            ticket_url
-        ])
+print(f"After filtering: {len(rows_to_write)} tickets")
 
-print(f"After tag filtering: {len(rows_to_write)} tickets")
-
-# --- Sort newest first ---
 rows_to_write.sort(key=lambda x: x[0], reverse=True)
 
-# --- WRITE ALL AT ONCE ---
 if rows_to_write:
     sheet.append_rows(rows_to_write)
     print(f"Wrote {len(rows_to_write)} rows.")
 else:
     print("No tickets found.")
-
-# --- STOP LOOPING (prevents Render auto-rerun) ---
-raise SystemExit("Done")
