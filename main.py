@@ -38,7 +38,7 @@ else:
             existing_ids.add(row[1])
 
 # --- LOOKBACK WINDOW (2 days) ---
-lookback_date = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%d")
+lookback_date = (datetime.utcnow() - timedelta(days=14)).strftime("%Y-%m-%d")
 
 query = f'type:ticket created>={lookback_date}'
 
